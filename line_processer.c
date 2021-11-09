@@ -5,10 +5,18 @@
 #include <math.h> // must link with -lm
 
 /*
-A program with a pipeline of 3 threads that interact with each other as producers and consumers.
-- Input thread is the first thread in the pipeline. It gets input from the user and puts it in a buffer it shares with the next thread in the pipeline.
-- Square root thread is the second thread in the pipeline. It consumes items from the buffer it shares with the input thread. It computes the square root of this item. It puts the computed value in a buffer it shares with the next thread in the pipeline. Thus this thread implements both consumer and producer functionalities.
-- Output thread is the third thread in the pipeline. It consumes items from the buffer it shares with the square root thread and prints the items.
+
+A program with a pipeline of 3 threads that interact with each other as producers 
+   and consumers.
+- Input thread is the first thread in the pipeline. It gets input from the user
+   and puts it in a buffer it shares with the next thread in the pipeline.
+- Square root thread is the second thread in the pipeline. It consumes items
+   from the buffer it shares with the input thread. It computes the square root
+   of this item. It puts the computed value in a buffer it shares with the next 
+   thread in the pipeline. Thus this thread implements both consumer and producer 
+   functionalities.
+- Output thread is the third thread in the pipeline. It consumes items from the 
+  buffer it shares with the square root thread and prints the items.
 
 */
 
