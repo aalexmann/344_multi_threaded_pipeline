@@ -10,7 +10,7 @@
 
 /*
 
-A program with a pipeline of 4 threads that interact with each other as producers 
+  A program with a pipeline of 4 threads that interact with each other as producers 
    and consumers:
 
 1. Input thread is the first thread in the pipeline. It holds every character from the 
@@ -35,14 +35,13 @@ A program with a pipeline of 4 threads that interact with each other as producer
 #define MAX_CHAR 1000
 // Number of lines that will be produced. This number is less than the size of the buffer. Hence, we can model the buffer as being unbounded.
 #define MAX_LINES 50
-// Special flag used to indicate that a STOP process has occurred.
-int end_processing = 0;
-// Special flag used to indicate that a plus was found in the previous character slot.
-int prev_plus = 0;
 
+int keep_processing = 1;
+int terminate = 0;
 
+int buff_1_closed = 0;
 // Buffer 1, shared resource between input thread and line separator thread
-char buffer_1[MAX_CHAR];
+char buffer_1[(MAX_CHAR*MAX_LINES)];
 // Number of items in the buffer
 int count_1 = 0;
 // Index where the input thread will put the next item
@@ -54,8 +53,9 @@ pthread_mutex_t mutex_1 = PTHREAD_MUTEX_INITIALIZER;
 // Initialize the condition variable for buffer 1
 pthread_cond_t not_empty_1 = PTHREAD_COND_INITIALIZER;
 
+int buff_2_closed = 0;
 // Buffer 2, shared resource between line separator thread and plus sign thread
-char buffer_2[MAX_CHAR];
+char buffer_2[(MAX_CHAR*MAX_LINES)];
 // Number of items in the buffer
 int count_2 = 0;
 // Index where the plus sign thread will put the next item
@@ -67,8 +67,9 @@ pthread_mutex_t mutex_2 = PTHREAD_MUTEX_INITIALIZER;
 // Initialize the condition variable for buffer 2
 pthread_cond_t not_empty_2 = PTHREAD_COND_INITIALIZER;
 
+int buff_3_closed = 0;
 // Buffer 3, shared resource between plus sign thread and output thread
-char buffer_3[MAX_CHAR];
+char buffer_3[(MAX_CHAR*MAX_LINES)];
 // Number of items in the buffer
 int count_3 = 0;
 // Index where the plus sign thread will put the next item
@@ -79,18 +80,6 @@ int consumed_idx_3 = 0;
 pthread_mutex_t mutex_3 = PTHREAD_MUTEX_INITIALIZER;
 // Initialize the condition variable for buffer 2
 pthread_cond_t not_empty_3 = PTHREAD_COND_INITIALIZER;
-
-// /*
-// Get input from the user.
-// This function doesn't perform any error checking.
-// */
-// char* get_user_input(){
-//   char val[MAX_CHAR];
-//   scanf("%s", val);
-//   char * value[MAX_CHAR];
-//   strcpy(*value, val);
-//   return *value;
-// }
 
 /*
  Put an item in buffer_1
@@ -114,18 +103,23 @@ void put_buff_1(char item){
  the input from the user and returns
  true if "STOP\n" is next, false otherwise.
 */
-int stop_processing(char letter[], int idx)
+int stop_processing(char letters[])
 {
-    if (strcmp(&letter[idx + 1], "S") == 0){
-        if (strcmp(&letter[idx + 1], "T") == 0){
-            if (strcmp(&letter[idx + 1], "O") == 0){
-                if (strcmp(&letter[idx + 1], "P") == 0){
-                    if (strcmp(&letter[idx + 1], "\n") == 0){
+    if ((strlen(letters)) == 5)
+    {
+        if (letters[0] == 'S')
+        {
+            if (letters[1] == 'T')
+            {
+                if (letters[2] == 'O')
+                {
+                    if (letters[3] == 'P')
+                    {
                         return 1;
                     }
                 }
             }
-        }
+        }       
     }
     return 0;
 }
@@ -136,18 +130,34 @@ int stop_processing(char letter[], int idx)
  Put the item in the buffer shared with the line separator thread.
 */
 void *get_input(void *args)
-{
-    // Get the user input
-    char character[MAX_CHAR];
-    fgets(character, MAX_CHAR, stdin);
-
-    for (int i = 0; i < MAX_CHAR; i++)
+{   
+    while(1) 
     {
-      put_buff_1(character[i]);
-      if (stop_processing(character, i)){
-          end_processing = 1;
-          break;
-      }  
+        int j = 0;
+        while (j < (MAX_CHAR*MAX_LINES))
+        {
+            // Get the user input
+            
+            char character[MAX_CHAR];
+            fgets(character, MAX_CHAR, stdin);
+            for (int i = 0; i < strlen(character); i++)
+            {
+                if (stop_processing(character))
+                {
+                    keep_processing = 0;
+                    pthread_cond_signal(&not_empty_1);
+                    return NULL;
+                }
+                put_buff_1(character[i]);
+                j++;
+            }
+            if (j >= (MAX_CHAR*MAX_LINES))
+            {
+                keep_processing = 0;
+                pthread_cond_signal(&not_empty_1);
+                return NULL;
+            }
+        }
     }
     return NULL;
 }
@@ -159,6 +169,12 @@ char get_buff_1(){
   // Lock the mutex before checking if the buffer has data
   pthread_mutex_lock(&mutex_1);
   while (count_1 == 0) {
+    if (!keep_processing)
+    {
+        pthread_mutex_unlock(&mutex_1);
+        buff_1_closed = 1;
+        return 0;
+    }
     // Buffer is empty. Wait for the producer to signal that the buffer has data
     pthread_cond_wait(&not_empty_1, &mutex_1);
   }
@@ -198,17 +214,26 @@ void put_buff_2(char item){
 */
 void *separate_line(void *args)
 {
-    char item;
-    char space[] = " ";
-    for (int i = 0; i < MAX_CHAR; i++)
+    
+    char item[1];
+    char space = ' ';
+    for (int i = 0; i < (MAX_CHAR*MAX_LINES); i++)
     {
-      item = get_buff_1();
-      if (strcmp(&item, "\n") == 0){
-          put_buff_2(space[0]);
-      }
-      else {
-          put_buff_2(item);
-      }
+        item[0] = get_buff_1();
+        if (buff_1_closed)
+        {
+            buff_2_closed = 1;
+            pthread_cond_signal(&not_empty_2);
+            return NULL;
+        }
+        if (item[0] == '\n')
+        {
+            put_buff_2(space);
+        }
+        else 
+        {
+            put_buff_2(item[0]);
+        }
     }
     return NULL;
 }
@@ -220,6 +245,12 @@ char get_buff_2(){
   // Lock the mutex before checking if the buffer has data
   pthread_mutex_lock(&mutex_2);
   while (count_2 == 0) {
+        if (buff_2_closed == 1)
+        {
+            buff_3_closed = 1;
+            pthread_mutex_unlock(&mutex_2);
+            return 0;
+        }
     // Buffer is empty. Wait for the producer to signal that the buffer has data
     pthread_cond_wait(&not_empty_2, &mutex_2);
   }
@@ -257,9 +288,10 @@ void put_buff_3(char item){
 */
 int check_next()
 {
+    
     // Lock the mutex before checking if the next is a plus.
     pthread_mutex_lock(&mutex_2);
-    if (strcmp(&buffer_2[consumed_idx_2], "+") == 0){
+    if (buffer_2[consumed_idx_2] == '+'){
         // Unlock the mutex
         pthread_mutex_unlock(&mutex_2);
         return 1;
@@ -279,19 +311,30 @@ int check_next()
 void *plusChange(void *args)
 {
     char item[1];
-    char exp[1] = "^";
-    for (int i = 0; i < MAX_CHAR; i++)
+    char exp = '^';
+    for (int i = 0; i < (MAX_CHAR*MAX_LINES); i++)
     {
-      item[0] = get_buff_2();
-      if (strcmp(&item[0], "+") == 0){
-          if (check_next()){
-              put_buff_3(exp[0]);
-              consumed_idx_2 = consumed_idx_2 + 1;
-          }
-      }
-      else {
-          put_buff_3(item[0]);
-      }
+        item[0] = get_buff_2();
+        if (buff_3_closed)
+        {
+            terminate = 1;
+            pthread_cond_signal(&not_empty_3);
+            return NULL;
+        }
+        if (item[0] == '+')
+        {
+            if (check_next()){
+                get_buff_2();
+                put_buff_3(exp);
+            }
+            else{
+                put_buff_3(item[0]);
+            }
+        }
+        else
+        {
+            put_buff_3(item[0]);
+        }
     }
     return NULL;
 }
@@ -303,6 +346,11 @@ char get_buff_3(){
   // Lock the mutex before checking if the buffer has data
   pthread_mutex_lock(&mutex_3);
   while (count_3 == 0) {
+      if (terminate == 1)
+      {
+          pthread_mutex_unlock(&mutex_3);
+          return 0;
+      }
     // Buffer is empty. Wait for the producer to signal that the buffer has data
     pthread_cond_wait(&not_empty_3, &mutex_3);
   }
@@ -323,20 +371,38 @@ char get_buff_3(){
 */
 void *write_output(void *args)
 {
-    char line_eighty[80];
-    for (int i = 0; i < MAX_CHAR; i++)
+    int lines = 0;
+    char line_eighty[81];
+    for (int i = 0; i < (MAX_CHAR*MAX_LINES); i++)
     {
-        if (i < 80){
+        if (i < 80)
+        {
             line_eighty[i] = get_buff_3();
-            if (i == 79){
+            if (terminate)
+            {
+                return NULL;
+            }
+            if ((i + 1) == 80){
                 printf("%s\n", line_eighty);
+                lines++;
             }
         }
         if (i >= 80){
-            line_eighty[i % 80] = get_buff_3();
-            if (i % 80 == 0){
-                printf("%s\n", line_eighty);
+            line_eighty[(i % 80)] = get_buff_3();
+            if (terminate)
+            {
+                return NULL;
             }
+            if ((i + 1) % 80 == 0)
+            {
+                printf("%s\n", line_eighty);
+                lines++;
+            }
+        }
+        if (lines >= MAX_LINES)
+        {
+            exit(3);
+            return NULL;
         }
     }
     return NULL;
