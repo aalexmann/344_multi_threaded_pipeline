@@ -108,22 +108,22 @@ void buff_1_PRODUCE(char item)
 */
 int stop_processing(char letters[])
 {
-    if ((strlen(letters)) == 5)
+    if (letters[0] == 'S')
     {
-        if (letters[0] == 'S')
+        if (letters[1] == 'T')
         {
-            if (letters[1] == 'T')
+            if (letters[2] == 'O')
             {
-                if (letters[2] == 'O')
+                if (letters[3] == 'P')
                 {
-                    if (letters[3] == 'P')
+                    if (letters[4] == '\n')
                     {
                         return 1;
                     }
                 }
             }
-        }       
-    }
+        }
+    }       
     return 0;
 }
 
@@ -138,12 +138,11 @@ void *get_input(void *args)
     while(1) 
     {
         // Get the user input:
-        char character[50000];
+        char character[1000];
         fgets(character, (MAX_CHAR * MAX_LINES), stdin);
-        printf("\n%s\n", character);
         // Process each char of user input individually:
         for (int i = 0; i < strlen(character); i++)
-        {
+        {            
             if (stop_processing(character))
             {
                 keep_processing = 0;
@@ -166,12 +165,8 @@ char buff_1_CONSUME()
     // Check for empty buffer:
     while (count_1 == 0)
     {
-        // Chain reaction to raise stop-process flags:
         if (!keep_processing)
         {
-            // Update "closed" flag, signal, and end function:
-            pthread_mutex_unlock(&mutex_1);
-            buff_1_closed = 1;
             return 0;
         }
         // Buffer is empty, wait for the producer to signal that the buffer has data:
@@ -220,14 +215,6 @@ void *separate_line(void *args)
     for (int i = 0; i < (MAX_CHAR*MAX_LINES); i++)
     {
         item[0] = buff_1_CONSUME();
-        // Check for empty buffer and "closed" flag:
-        if (buff_1_closed)
-        {
-            // Update "closed" flag, signal, and end function:
-            buff_2_closed = 1;
-            pthread_cond_signal(&not_empty_2);
-            return NULL;
-        }
         // Replaces newline character with a space:
         if (item[0] == '\n')
         {
@@ -237,6 +224,14 @@ void *separate_line(void *args)
         else 
         {
             buff_2_PRODUCE(item[0]);
+        }
+        // Check for empty buffer and "closed" flag:
+        if ((!keep_processing) && (count_1 == 0))
+        {
+            // Update "closed" flag, signal, and end function:
+            buff_1_closed = 1;
+            pthread_cond_signal(&not_empty_2);
+            return NULL;
         }
     }
     return NULL;
@@ -252,14 +247,6 @@ char buff_2_CONSUME()
     // Check for empty buffer:
     while (count_2 == 0)
     {
-        // Chain reaction to raise stop-process flags:
-        if (buff_2_closed)
-        {
-            // Update "closed" flag, signal, and end function:
-            buff_3_closed = 1;
-            pthread_mutex_unlock(&mutex_2);
-            return 0;
-        }
         // Buffer is empty. Wait for the producer to signal that the buffer has data:
         pthread_cond_wait(&not_empty_2, &mutex_2);
     }
@@ -327,14 +314,6 @@ void *plusChange(void *args)
     for (int i = 0; i < (MAX_CHAR*MAX_LINES); i++)
     {
         item[0] = buff_2_CONSUME();
-        // Check for empty buffer and "closed" flag:
-        if (buff_3_closed)
-        {
-            // Update "closed" flag, signal, and end function:
-            terminate = 1;
-            pthread_cond_signal(&not_empty_3);
-            return NULL;
-        }
         // Replaces "++" with a carat:
         if (item[0] == '+')
         {
@@ -357,6 +336,14 @@ void *plusChange(void *args)
         {
             buff_3_PRODUCE(item[0]);
         }
+        // Check for empty buffer and "closed" flag:
+        if ((buff_1_closed) && (count_2 == 0))
+        {
+            // Update "closed" flag, signal, and end function:
+            buff_2_closed = 1;
+            pthread_cond_signal(&not_empty_3);
+            return NULL;
+        }
     }
     return NULL;
 }
@@ -370,12 +357,6 @@ char buff_3_CONSUME()
     pthread_mutex_lock(&mutex_3);
     while (count_3 == 0)
     {
-        // Checks if terminate flag is set:
-        if (terminate)
-        {
-            pthread_mutex_unlock(&mutex_3);
-            return 0;
-        }
         // Buffer is empty. Wait for the producer to signal that the buffer has data
         pthread_cond_wait(&not_empty_3, &mutex_3);
     }
@@ -404,34 +385,34 @@ void *write_output(void *args)
     {
         if (i < 80)
         {
-            // Adds char to line cadidate:
+            // Adds char to line candidate:
             line_eighty[i] = buff_3_CONSUME();
-            // Checks for Terminate flag:
-            if (terminate)
-            {
-                return NULL;
-            }
             // Prints line if it contains 80 characters:
             if ((i + 1) == 80){
                 printf("%s\n", line_eighty);
                 // Increments lines to track when 50 have been printed:
                 lines++;
             }
-        }
-        if (i >= 80){
-            // Adds char to line cadidate:
-            line_eighty[(i % 80)] = buff_3_CONSUME();
-            // Checks for Terminate flag:
-            if (terminate)
+            // Checks that buffer_3 is empty and will not be refilled:
+            if ((buff_2_closed) && (count_3 == 0))
             {
                 return NULL;
             }
+        }
+        if (i >= 80){
+            // Adds char to line candidate:
+            line_eighty[(i % 80)] = buff_3_CONSUME();
             // Prints line if it contains 80 new characters:
             if ((i + 1) % 80 == 0)
             {
                 printf("%s\n", line_eighty);
                 // Increments lines to track when 50 have been printed:
                 lines++;
+            }
+            // Checks that buffer_3 is empty and will not be refilled:
+            if ((buff_2_closed) && (count_3 == 0))
+            {
+                return NULL;
             }
         }
         // Checks if line maximum has been reached:
